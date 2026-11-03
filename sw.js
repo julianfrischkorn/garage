@@ -1,6 +1,6 @@
 // Offline-Modus: App-Dateien und Schriften werden zwischengespeichert.
 // Bei jeder Änderung an den App-Dateien VERSION hochzählen, damit Handys die neue Fassung laden.
-const VERSION = 'garage-v1';
+const VERSION = 'garage-v2';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'sync.js', 'config.js', 'manifest.webmanifest',
   'icon-192.png', 'icon-512.png'];
 
