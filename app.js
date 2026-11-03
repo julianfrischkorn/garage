@@ -90,13 +90,13 @@ function status(it, carKm) {
     const days = Math.round((end - today()) / DAY);
     r.target = `fällig ${String(m).padStart(2, '0')}/${y}`;
     r.state = days < 0 ? 'bad' : days <= 60 ? 'warn' : 'ok';
-    r.main = days < 0 ? `${dur(-days)} überfällig` : `noch ${dur(days)}`;
+    r.main = days < 0 ? `${dur(-days)} überfällig` : `in ${dur(days)}`;
     r.pct = clamp(1 - days / ((it.months || 24) * 30.44)); r.left = days;
     return r;
   }
   if (!it.km_int && !it.time_yr) {
     r.state = 'watch';
-    r.main = it.last_date ? `zuletzt ${fd(it.last_date)}` : 'ohne Intervall';
+    r.main = it.last_date ? `zuletzt ${fd(it.last_date)}` : 'beobachten';
     if (it.last_km != null) r.target = `bei ${fk(it.last_km)} km`;
     return r;
   }
@@ -111,8 +111,11 @@ function status(it, carKm) {
     const dd = pd(it.last_date); dd.setMonth(dd.getMonth() + Math.round(it.time_yr * 12));
     tg.push(fm(dd)); days = Math.round((dd - today()) / DAY); fr.push(1 - days / (it.time_yr * 365.25));
   }
-  if (kmLeft != null) parts.push(kmLeft > 0 ? `noch ${fk(kmLeft)} km` : `${fk(-kmLeft)} km drüber`);
-  if (days != null) parts.push(days > 0 ? `noch ${dur(days)}` : `${dur(-days)} drüber`);
+  // Nur das zeigen, was zuerst eintritt: km oder Zeit
+  const kmFrac = kmLeft != null ? kmLeft / it.km_int : Infinity;
+  const dayFrac = days != null ? days / (it.time_yr * 365.25) : Infinity;
+  if (kmLeft != null && kmFrac <= dayFrac) parts.push(kmLeft > 0 ? `in ${fk(kmLeft)} km` : `${fk(-kmLeft)} km überfällig`);
+  else if (days != null) parts.push(days > 0 ? `in ${dur(days)}` : `${dur(-days)} überfällig`);
   const bad = (kmLeft != null && kmLeft <= 0) || (days != null && days <= 0);
   const warn = (kmLeft != null && kmLeft <= 2000) || (days != null && days <= 90);
   r.state = bad ? 'bad' : warn ? 'warn' : 'ok';
@@ -129,7 +132,7 @@ const countBad = c => c.items.filter(it => status(it, c.km).state === 'bad').len
 /* ---------- Zustand ---------- */
 let data = normData(Sync.load());
 let cur = mem.get('mg.cur');
-const ui = {tab: mem.get('mg.tab') || 'over', showOk: false, q: '', kat: null};
+const ui = {tab: mem.get('mg.tab') || 'over', showOk: false, showOpen: false, q: '', kat: null};
 let syncState = 'idle';
 
 const sortCars = () => data.cars.sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
@@ -182,59 +185,70 @@ function blankView() {
 }
 function headView(c) {
   const digits = c.km != null ? String(Math.round(c.km)).padStart(6, '0').split('') : '––––––'.split('');
-  const st = c.items.map(it => status(it, c.km).state);
-  const nb = st.filter(s => s === 'bad').length, nw = st.filter(s => s === 'warn').length;
-  const tally = [nb && `<span class="t-bad">${nb} fällig</span>`, nw && `<span>${nw} bald</span>`, !nb && !nw && `<span>Alles im Plan</span>`].filter(Boolean).join('');
   return `<section class="head" style="--car:${c.color};--car-ink:${inkOn(c.color)}">
-    <div><div class="head-name">${esc(c.name)}</div>${c.sub ? `<div class="head-sub">${esc(c.sub)}</div>` : ''}</div>
-    <button class="head-edit" type="button" data-act="edit-car">Bearbeiten</button>
-    <div class="odo">
-      <button class="odo-btn" type="button" data-act="km" aria-label="Kilometerstand ändern">
-        <span class="odo-digits">${digits.map(d => `<span>${d}</span>`).join('')}</span>
-        <span><span class="odo-unit">KM</span><span class="odo-hint">${c.km != null ? 'antippen zum Ändern' : 'km-Stand eintragen'}</span></span>
-      </button>
-      <div class="tally">${tally}</div>
-    </div></section>`;
+    <div class="head-text"><div class="head-name">${esc(c.name)}</div>${c.sub ? `<div class="head-sub">${esc(c.sub)}</div>` : ''}</div>
+    <button class="head-edit" type="button" data-act="edit-car" aria-label="Fahrzeug bearbeiten">
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M11 2.5l2.5 2.5-8 8H3v-2.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></button>
+    <button class="odo-btn" type="button" data-act="km" aria-label="Kilometerstand ändern">
+      <span class="odo-digits">${digits.map(d => `<span>${d}</span>`).join('')}</span><span class="odo-unit">KM</span>
+    </button></section>`;
 }
 function mrow(it, s) {
   return `<button class="mrow s-${s.state}" type="button" data-act="item" data-id="${esc(it.id)}">
-    <span class="pill">${PILL[s.state]}</span>
-    <span class="mline"><span class="mname">${esc(it.name)}</span><span class="mmain num">${esc(s.main)}</span></span>
-    <span class="mtarget num"><span>${esc(s.target)}</span>${s.pct != null ? `<span class="meter"><i style="width:${Math.round(s.pct * 100)}%"></i></span>` : ''}</span>
+    <span class="sdot" aria-hidden="true"></span><span class="mname">${esc(it.name)}</span><span class="mmain num">${esc(s.main)}</span>
   </button>`;
 }
+function fold(key, label, rows) {
+  if (!rows.length) return '';
+  const open = ui[key];
+  return `<button class="more" type="button" data-act="fold" data-key="${key}" aria-expanded="${!!open}"><span>${label}</span><span class="num">${rows.length} ${open ? '▴' : '▾'}</span></button>` +
+    (open ? rows.map(r => mrow(r.it, r.s)).join('') : '');
+}
 function maintView(c) {
+  if (!c.items.length) return `<section class="block"><p class="empty" style="padding-top:16px">Noch keine Wartungspunkte. Tippe oben auf den Stift, um welche anzulegen.</p></section>`;
   const rows = c.items.map(it => ({it, s: status(it, c.km)}))
     .sort((a, b) => RANK[a.s.state] - RANK[b.s.state] || (b.s.pct ?? 0) - (a.s.pct ?? 0));
   const urgent = rows.filter(r => r.s.state === 'bad' || r.s.state === 'warn');
-  const open = rows.filter(r => r.s.state === 'unknown');
   const fine = rows.filter(r => r.s.state === 'ok' || r.s.state === 'watch');
-  let h = `<section class="block"><div class="block-h"><h2>Als Nächstes</h2><small>${c.items.length} Wartungspunkte</small></div>`;
-  if (!c.items.length) return h + `<p class="empty">Noch keine Wartungspunkte. Über „Bearbeiten“ legst du Intervalle an.</p></section>`;
-  if (urgent.length) h += urgent.map(r => mrow(r.it, r.s)).join('');
+  const open = rows.filter(r => r.s.state === 'unknown');
+  let h = `<section class="block">`;
+  if (urgent.length) h += `<div class="block-h"><h2>Steht an</h2></div>` + urgent.map(r => mrow(r.it, r.s)).join('');
   else {
     const next = fine.filter(r => r.s.state === 'ok').sort((a, b) => (b.s.pct ?? 0) - (a.s.pct ?? 0))[0];
-    h += `<div class="calm"><b>Nichts fällig.</b>${next ? `<span>Als Nächstes: ${esc(next.it.name)}, ${esc(next.s.main)}.</span>` : ''}</div>`;
+    h += `<div class="calm"><b>Alles im Plan</b>${next ? `<span>Als Nächstes: ${esc(next.it.name)}, ${esc(next.s.main)}</span>` : ''}</div>`;
   }
-  if (open.length) h += `<div class="group-label">Noch ohne Angaben</div>` + open.map(r => mrow(r.it, r.s)).join('');
-  if (fine.length) {
-    h += `<button class="more" type="button" data-act="toggle-ok"><span>${fine.length} in Ordnung</span><span>${ui.showOk ? 'ausblenden ▴' : 'anzeigen ▾'}</span></button>`;
-    if (ui.showOk) h += fine.map(r => mrow(r.it, r.s)).join('');
-  }
-  return h + `<p class="tip">Punkt antippen, um ihn als erledigt einzutragen.</p></section>`;
+  return h + fold('showOk', 'In Ordnung', fine) + fold('showOpen', 'Ohne Angaben', open) + `</section>`;
 }
 function notesView(c) {
-  return `<section class="block"><div class="block-h"><h2>Notizen</h2><small>Teile, To-dos</small></div>
-    <textarea class="notes" id="notes" placeholder="z. B. Bremsbeläge VA bestellen, Radlager hinten links prüfen">${esc(c.notes)}</textarea></section>`;
+  return `<section class="block"><div class="block-h"><h2>Notizen</h2></div>
+    <textarea class="notes" id="notes" placeholder="Teile bestellen, Dinge zum Prüfen …">${esc(c.notes)}</textarea></section>`;
+}
+/* Antippen eines Wartungspunkts: Details und „Erledigt“ */
+function itemSheet(id) {
+  const c = car(), it = c.items.find(x => x.id === id); if (!it) return;
+  const s = status(it, c.km), rows = [];
+  if (it.kind === 'due') rows.push(['Fällig', it.due ? `${it.due.slice(5)}/${it.due.slice(0, 4)}` : '–']);
+  else {
+    if (s.target) rows.push(['Fällig bei', s.target.replace('fällig bei ', '')]);
+    const last = [it.last_date && fd(it.last_date), it.last_km != null && `${fk(it.last_km)} km`].filter(Boolean).join(' · ');
+    if (last) rows.push(['Zuletzt', last]);
+    const iv = [it.km_int && `${fk(it.km_int)} km`, it.time_yr && `${String(it.time_yr).replace('.', ',')} ${it.time_yr === 1 ? 'Jahr' : 'Jahre'}`].filter(Boolean).join(' oder ');
+    if (iv) rows.push(['Intervall', `alle ${iv}`]);
+  }
+  openSheet(`${head(esc(it.name), `<span class="st-${s.state}">${esc(s.main)}</span>`)}
+    ${rows.length ? `<dl class="facts">${rows.map(([l, v]) => `<dt>${l}</dt><dd class="num">${esc(v)}</dd>`).join('')}</dl>` : ''}
+    <div class="actions"><button class="secondary" type="button" data-act="edit-car">Intervall ändern</button>
+      <button class="primary inline" type="button" data-act="item-done" data-id="${esc(it.id)}">Als erledigt eintragen</button></div>`, {kind: 'item'});
 }
 function logView(c) {
   const used = [...new Set(c.log.map(e => e.kat))];
   const kats = KAT.map(k => k[0]).filter(k => used.includes(k)).concat(used.filter(k => !KAT_COLOR[k]));
-  if (!c.log.length) return `<section class="block"><div class="block-h"><h2>Verlauf</h2></div><p class="empty">Noch nichts eingetragen. Unten auf „Arbeit eintragen“ tippen.</p></section>`;
-  return `<section class="block"><div class="filters">
-      <input class="search" id="q" type="search" placeholder="Suchen, z. B. Bremse oder Mahle" value="${esc(ui.q)}" autocomplete="off" aria-label="Verlauf durchsuchen">
-      ${kats.length > 1 ? `<div class="kats">${kats.map(k => `<button class="kat" type="button" data-act="kat" data-kat="${esc(k)}" aria-pressed="${ui.kat === k}"><span class="dot" style="background:${KAT_COLOR[k] || '#9aa1a8'}"></span>${esc(k)}</button>`).join('')}</div>` : ''}
-    </div><div id="log-list">${logList(c)}</div></section>`;
+  if (!c.log.length) return `<section class="block"><p class="empty" style="padding-top:16px">Noch nichts eingetragen.</p></section>`;
+  const many = c.log.length > 6;
+  return `<section class="block">${many ? `<div class="filters">
+      <input class="search" id="q" type="search" placeholder="Suchen" value="${esc(ui.q)}" autocomplete="off" aria-label="Verlauf durchsuchen">
+      ${kats.length > 2 ? `<div class="kats">${kats.map(k => `<button class="kat" type="button" data-act="kat" data-kat="${esc(k)}" aria-pressed="${ui.kat === k}"><span class="dot" style="background:${KAT_COLOR[k] || '#9aa1a8'}"></span>${esc(k)}</button>`).join('')}</div>` : ''}
+    </div>` : ''}<div id="log-list">${logList(c)}</div></section>`;
 }
 function logList(c) {
   const q = ui.q.trim().toLowerCase();
@@ -258,11 +272,13 @@ function logList(c) {
   return h;
 }
 function techView(c) {
-  let h = `<section class="block"><div class="block-h"><h2>Datenblatt</h2><button class="link" type="button" data-act="edit-car">Bearbeiten</button></div>`;
-  if (!c.tech.length) return h + `<p class="empty">Noch keine technischen Daten.</p></section>`;
-  return h + c.tech.map(s => `<div class="sheet-sec"><h3>${esc(s.s)}</h3><dl>${s.rows.map(r =>
-    `<dt>${esc(r.l)}</dt><dd>${r.v ? `<button class="copy" type="button" data-act="copy" data-v="${esc(r.v)}" data-l="${esc(r.l)}">${esc(r.v)}</button>` : '<div class="missing">fehlt noch</div>'}</dd>`).join('')}</dl></div>`).join('') +
-    `<p class="tip">Wert antippen, um ihn zu kopieren, etwa die FIN für eine Teilebestellung.</p></section>`;
+  const secs = c.tech.map(s => ({s: s.s, rows: s.rows.filter(r => r.v.trim())})).filter(s => s.rows.length);
+  const missing = c.tech.reduce((n, s) => n + s.rows.filter(r => !r.v.trim()).length, 0);
+  if (!secs.length) return `<section class="block"><p class="empty" style="padding-top:16px">Noch keine technischen Daten.</p>
+    <button class="more" type="button" data-act="edit-car"><span>Daten eintragen</span><span>›</span></button></section>`;
+  return `<section class="block">` + secs.map(s => `<div class="sheet-sec"><h3>${esc(s.s)}</h3><dl>${s.rows.map(r =>
+    `<dt>${esc(r.l)}</dt><dd><button class="copy" type="button" data-act="copy" data-v="${esc(r.v)}" data-l="${esc(r.l)}">${esc(r.v)}</button></dd>`).join('')}</dl></div>`).join('') +
+    `<button class="more" type="button" data-act="edit-car"><span>${missing ? `${missing} Angaben fehlen noch` : 'Datenblatt bearbeiten'}</span><span>›</span></button></section>`;
 }
 
 /* ---------- Blätter (Formulare) ---------- */
@@ -311,18 +327,17 @@ function entrySheet(entryId, itemId) {
   const pre = it ? new Set([it.id]) : new Set();
   const kat = e ? e.kat : (guessKat(work) || 'Sonstiges');
   const works = [...new Set(data.cars.flatMap(x => x.log.map(l => l.work)))].sort();
-  openSheet(`${head(e ? 'Eintrag ändern' : 'Arbeit eintragen', esc(c.name))}
+  openSheet(`${head(e ? 'Eintrag ändern' : 'Arbeit eintragen')}
     <label class="f"><span>Was wurde gemacht?</span><input id="e-work" list="e-works" value="${esc(work)}" placeholder="z. B. Ölwechsel, Bremsbeläge VA" ${e || it ? '' : 'autofocus'} autocomplete="off"><span class="err" id="e-err" hidden>Bitte eintragen, was gemacht wurde.</span></label>
     <datalist id="e-works">${works.map(w => `<option value="${esc(w)}">`).join('')}</datalist>
     <div class="row2">
       <label class="f"><span>Datum</span><input id="e-date" type="date" value="${e ? e.date : iso(today())}"></label>
       <label class="f"><span>km-Stand</span><input id="e-km" class="num" inputmode="numeric" value="${e ? (e.km ?? '') : (c.km ?? '')}" placeholder="z. B. 171200"></label>
     </div>
+    ${c.items.length ? `<fieldset><legend>Wartung neu starten</legend><div class="toggles" id="e-items">${c.items.map(x =>
+      `<label class="toggle"><input type="checkbox" id="e-it-${esc(x.id)}" value="${esc(x.id)}"${pre.has(x.id) ? ' checked' : ''}><span>${esc(x.name)}</span></label>`).join('')}</div></fieldset>` : ''}
+    <label class="f"><span>Notiz</span><textarea id="e-note" placeholder="Öl, Teile, Marke …">${esc(e ? e.note : '')}</textarea></label>
     <label class="f"><span>Kategorie</span><select id="e-kat">${KAT.map(([k]) => `<option${k === kat ? ' selected' : ''}>${esc(k)}</option>`).join('')}</select></label>
-    ${c.items.length ? `<fieldset><legend>Zählt als erledigt für</legend><div class="toggles" id="e-items">${c.items.map(x =>
-      `<label class="toggle"><input type="checkbox" id="e-it-${esc(x.id)}" value="${esc(x.id)}"${pre.has(x.id) ? ' checked' : ''}><span>${esc(x.name)}</span></label>`).join('')}</div>
-      <p class="hint">Markierte Punkte starten mit diesem Datum und km-Stand neu.${c.items.some(x => x.kind === 'due') ? ' TÜV springt 2 Jahre weiter.' : ''}</p></fieldset>` : ''}
-    <label class="f"><span>Notiz (optional)</span><textarea id="e-note" placeholder="z. B. Castrol 5W-30, 3,9 l, Mahle-Filter">${esc(e ? e.note : '')}</textarea></label>
     <div class="actions">${e ? `<button class="danger" type="button" data-act="e-del">Löschen</button><span class="spacer"></span>` : ''}
       <button class="secondary" type="button" data-act="close">Abbrechen</button>
       <button class="primary inline" type="button" data-act="e-save">Speichern</button></div>`, {kind: 'entry', entryId, touched: !!(e || it)});
@@ -360,7 +375,6 @@ function kmSheet() {
   const c = car();
   openSheet(`${head('Kilometerstand', esc(c.name))}
     <label class="f"><span>Aktueller Tachostand</span><input id="k-km" class="big-km num" inputmode="numeric" value="${c.km ?? ''}" placeholder="0" autofocus></label>
-    <p class="hint">${c.km != null ? `Bisher ${fk(c.km)} km.` : 'Wird für alle km-Intervalle gebraucht.'}</p>
     <div class="actions"><button class="secondary" type="button" data-act="close">Abbrechen</button><button class="primary inline" type="button" data-act="k-save">Speichern</button></div>`, {kind: 'km'});
   $('#k-km').addEventListener('keydown', e => { if (e.key === 'Enter') acts['k-save'](); });
 }
@@ -398,7 +412,6 @@ function carSheet(draft, isNew) {
       <div class="f"><span>Farbe</span><div class="swatches">${SWATCHES.map((s, i) => `<label><input type="radio" name="c-color" id="c-col-${i}" value="${s}" data-f="color"${s.toLowerCase() === d.color.toLowerCase() ? ' checked' : ''}><span style="background:${s}"></span></label>`).join('')}
         <input type="color" id="c-color" data-f="color" value="${d.color}" aria-label="Eigene Farbe"></div></div></div>
     <div class="edit-h">Wartungspunkte</div>
-    <p class="hint">Bei „Intervall“ zählt, was zuerst eintritt: km oder Jahre. Beides leer lassen, wenn etwas nur beobachtet wird, etwa die Steuerkette.</p>
     ${itemsHtml}<button class="add" type="button" data-act="c-add-item">+ Wartungspunkt</button>
     <div class="edit-h">Datenblatt</div>
     ${techHtml}<button class="add" type="button" data-act="c-add-sec">+ Abschnitt</button>
@@ -427,21 +440,19 @@ sheet.addEventListener('input', e => {
 function menuSheet() {
   const c = car();
   let where;
-  if (!Sync.enabled) where = `<b>Nur auf diesem Gerät.</b><span>Der Abgleich über Google Drive ist noch nicht eingerichtet (Google-Client-ID fehlt in config.js). Lade zur Sicherheit ab und zu ein Backup herunter.</span>`;
-  else if (!Sync.linked) where = `<b>Google Drive ist nicht verbunden.</b><span>Verbinde Drive, damit Handy und PC dieselben Daten haben. Die App legt nur eine eigene, versteckte Datei an und sieht deine anderen Dateien nicht.</span>`;
-  else where = `<b>Gesichert in deinem Google Drive.</b><span>Die Daten liegen auf diesem Gerät und in einer versteckten App-Datei in deinem Drive.${Sync.lastSync ? ` Zuletzt abgeglichen ${ago(Sync.lastSync)}.` : ''}</span>`;
+  if (!Sync.enabled) where = 'Nur auf diesem Gerät gespeichert.';
+  else if (!Sync.linked) where = 'Google Drive ist nicht verbunden. Die Daten liegen nur auf diesem Gerät.';
+  else where = `In Google Drive gesichert${Sync.lastSync ? `, ${ago(Sync.lastSync)}` : ''}.`;
   openSheet(`${head('Mehr')}
     <div class="menu">
-      ${c ? `<button type="button" data-act="edit-car"><b>${esc(c.name)} bearbeiten</b><small>Name, Farbe, Wartungspunkte, Datenblatt</small></button>` : ''}
-      <button type="button" data-act="new-car"><b>Fahrzeug hinzufügen</b><small>Mit üblichen Wartungspunkten als Vorlage</small></button>
-      ${Sync.enabled ? (Sync.linked
-        ? `<button type="button" data-act="sync"><b>Jetzt abgleichen</b><small>Holt den neuesten Stand aus Google Drive</small></button>`
-        : `<button type="button" data-act="sync"><b>Mit Google Drive verbinden</b><small>Einmal mit deinem Google-Konto anmelden</small></button>`) : ''}
-      <button type="button" data-act="export"><b>Backup herunterladen</b><small>Alle Fahrzeuge als JSON-Datei</small></button>
-      <button type="button" data-act="import"><b>Backup einspielen</b><small>Auch Backups der alten Garage-App und der Claude-Version</small></button>
-      ${Sync.linked ? `<button type="button" data-act="unlink"><b>Drive trennen</b><small>Daten bleiben auf diesem Gerät</small></button>` : ''}
+      ${c ? `<button type="button" data-act="edit-car"><b>${esc(c.name)} bearbeiten</b></button>` : ''}
+      <button type="button" data-act="new-car"><b>Fahrzeug hinzufügen</b></button>
+      ${Sync.enabled ? `<button type="button" data-act="sync"><b>${Sync.linked ? 'Jetzt abgleichen' : 'Mit Google Drive verbinden'}</b></button>` : ''}
+      <button type="button" data-act="export"><b>Backup herunterladen</b></button>
+      <button type="button" data-act="import"><b>Backup einspielen</b></button>
+      ${Sync.linked ? `<button type="button" data-act="unlink"><b>Drive trennen</b></button>` : ''}
     </div>
-    <div class="note-box">${where}</div>`, {kind: 'menu'});
+    <p class="hint">${where}</p>`, {kind: 'menu'});
 }
 function importSheet(incoming) {
   openSheet(`${head('Backup einspielen')}
@@ -464,14 +475,15 @@ $('#import-file').addEventListener('change', e => {
 
 /* ---------- Aktionen ---------- */
 const acts = {
-  car: b => { cur = b.dataset.id; ui.showOk = false; ui.q = ''; ui.kat = null; render(); window.scrollTo({top: 0}); },
+  car: b => { cur = b.dataset.id; ui.showOk = false; ui.showOpen = false; ui.q = ''; ui.kat = null; render(); window.scrollTo({top: 0}); },
   tab: b => { ui.tab = b.dataset.tab; mem.set('mg.tab', ui.tab); render(); },
   kat: b => { ui.kat = ui.kat === b.dataset.kat ? null : b.dataset.kat; render(); },
   km: () => kmSheet(),
   entry: () => entrySheet(),
-  item: b => entrySheet(null, b.dataset.id),
+  item: b => itemSheet(b.dataset.id),
+  'item-done': b => entrySheet(null, b.dataset.id),
   log: b => entrySheet(b.dataset.id),
-  'toggle-ok': () => { ui.showOk = !ui.showOk; render(); },
+  fold: b => { ui[b.dataset.key] = !ui[b.dataset.key]; render(); },
   copy: b => {
     const v = b.dataset.v, l = b.dataset.l;
     const done = () => toast(`${l} kopiert`);
