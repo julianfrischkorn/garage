@@ -2,7 +2,7 @@
 // Bei jeder Änderung an den App-Dateien VERSION hochzählen, damit Handys die neue Fassung laden.
 const VERSION = 'garage-v1';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'sync.js', 'config.js', 'manifest.webmanifest',
-  'icons/icon-192.png', 'icons/icon-512.png'];
+  'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

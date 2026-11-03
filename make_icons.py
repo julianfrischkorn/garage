@@ -3,7 +3,7 @@ import math
 from pathlib import Path
 from PIL import Image, ImageDraw
 
-OUT = Path(__file__).parent / "icons"
+OUT = Path(__file__).parent
 OUT.mkdir(exist_ok=True)
 
 
