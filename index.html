@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Meine Garage</title>
+<meta name="description" content="Wartung, Verlauf und Datenblatt für die eigenen Autos">
+<meta name="theme-color" content="#eceef0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1215" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <div class="brand">Meine Garage</div>
+  <button id="sync" class="sync" type="button" data-act="sync">Lädt …</button>
+  <button class="icon-btn" type="button" data-act="menu" aria-label="Mehr">
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="10" r="1.8" fill="currentColor"/><circle cx="10" cy="10" r="1.8" fill="currentColor"/><circle cx="16" cy="10" r="1.8" fill="currentColor"/></svg>
+  </button>
+</div></header>
+<nav class="cars" aria-label="Fahrzeuge"><div class="wrap" id="cars"></div></nav>
+<main><div class="wrap" id="main"></div></main>
+<div class="dock" id="dock" hidden><div class="wrap"><button class="primary" data-act="entry" type="button">+ Arbeit eintragen</button></div></div>
+<div class="scrim" id="sheet" hidden></div>
+<div class="toast" id="toast" role="status" hidden></div>
+<input type="file" id="import-file" accept=".json,application/json" hidden>
+
+<script src="config.js"></script>
+<script src="https://accounts.google.com/gsi/client" async></script>
+<script src="sync.js"></script>
+<script src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+</script>
+</body>
+</html>
